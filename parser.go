@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Static errors for err113 compliance
@@ -43,10 +44,144 @@ func Parse(uiSchemaJSON, schemaJSON []byte) (*AST, error) {
 		}
 	}
 
-	return &AST{
+	ast := &AST{
 		UISchema: uiSchema,
 		Schema:   schema,
-	}, nil
+	}
+
+	// Post-parse: resolve schema properties onto controls
+	if schema != nil {
+		resolveSchemaProperties(ast)
+	}
+
+	return ast, nil
+}
+
+// resolveSchemaProperties walks the AST and resolves schema property definitions onto Control nodes
+func resolveSchemaProperties(ast *AST) {
+	_ = Walk(ast.UISchema, &schemaResolver{schema: ast.Schema})
+}
+
+type schemaResolver struct {
+	BaseVisitor
+	schema any
+}
+
+func (r *schemaResolver) VisitControl(c *Control) error {
+	c.SchemaProperty = resolveScope(c.Scope, r.schema)
+	return nil
+}
+
+// resolveScope walks the JSON Schema following a JSON Pointer scope path
+// and returns the property definition at that path.
+func resolveScope(scope string, schema any) *SchemaProperty {
+	if schema == nil {
+		return nil
+	}
+
+	// Strip leading "#/" or "#"
+	path := strings.TrimPrefix(scope, "#/")
+
+	path = strings.TrimPrefix(path, "#")
+
+	if path == "" {
+		return nil
+	}
+
+	segments := strings.Split(path, "/")
+
+	current, ok := schema.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	// Track the parent node at each "properties" level for required checking
+	var parent map[string]any
+
+	var propertyName string
+
+	for i, segment := range segments {
+		val, exists := current[segment]
+		if !exists {
+			return nil
+		}
+
+		next, ok := val.(map[string]any)
+		if !ok {
+			return nil
+		}
+
+		// Track parent: when we see "properties", the next segment is a property name
+		if segment == "properties" && i+1 < len(segments) {
+			parent = current
+		} else if i > 0 && segments[i-1] == "properties" {
+			propertyName = segment
+		}
+
+		current = next
+	}
+
+	return buildSchemaProperty(current, parent, propertyName)
+}
+
+func buildSchemaProperty(node, parent map[string]any, propertyName string) *SchemaProperty {
+	sp := &SchemaProperty{}
+
+	if t, ok := node["type"].(string); ok {
+		sp.Type = t
+	}
+
+	if f, ok := node["format"].(string); ok {
+		sp.Format = f
+	}
+
+	if p, ok := node["pattern"].(string); ok {
+		sp.Pattern = p
+	}
+
+	if e, ok := node["enum"].([]any); ok {
+		sp.Enum = e
+	}
+
+	if c, exists := node["const"]; exists {
+		sp.Const = c
+	}
+
+	if d, exists := node["default"]; exists {
+		sp.Default = d
+	}
+
+	if v, ok := node["minLength"].(float64); ok {
+		i := int(v)
+		sp.MinLength = &i
+	}
+
+	if v, ok := node["maxLength"].(float64); ok {
+		i := int(v)
+		sp.MaxLength = &i
+	}
+
+	if v, ok := node["minimum"].(float64); ok {
+		sp.Minimum = &v
+	}
+
+	if v, ok := node["maximum"].(float64); ok {
+		sp.Maximum = &v
+	}
+
+	// Check if this property is in parent's "required" array
+	if parent != nil && propertyName != "" {
+		if req, ok := parent["required"].([]any); ok {
+			for _, r := range req {
+				if s, ok := r.(string); ok && s == propertyName {
+					sp.Required = true
+					break
+				}
+			}
+		}
+	}
+
+	return sp
 }
 
 // parseUISchema parses the UI schema JSON into a UISchemaElement

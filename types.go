@@ -42,11 +42,29 @@ func (b *BaseUISchemaElement) GetI18n() *string {
 	return b.I18n
 }
 
+// SchemaProperty represents a resolved JSON Schema property definition.
+// Fields are nil/zero when not present in the schema.
+type SchemaProperty struct {
+	Type       string                    `json:"type,omitempty"`
+	Format     string                    `json:"format,omitempty"`
+	Enum       []any                     `json:"enum,omitempty"`
+	Const      any                       `json:"const,omitempty"`
+	Default    any                       `json:"default,omitempty"`
+	Pattern    string                    `json:"pattern,omitempty"`
+	MinLength  *int                      `json:"minLength,omitempty"`
+	MaxLength  *int                      `json:"maxLength,omitempty"`
+	Minimum    *float64                  `json:"minimum,omitempty"`
+	Maximum    *float64                  `json:"maximum,omitempty"`
+	Required   bool                      `json:"-"`                    // true if this property appears in parent's "required" array
+	Properties map[string]*SchemaProperty `json:"properties,omitempty"` // for type: "object"
+}
+
 // Control binds a UI input to a specific data property
 type Control struct {
 	BaseUISchemaElement
-	Scope string `json:"scope"`
-	Label any    `json:"label,omitempty"` // Can be string, bool, or LabelDescription
+	Scope          string          `json:"scope"`
+	Label          any             `json:"label,omitempty"`  // Can be string, bool, or LabelDescription
+	SchemaProperty *SchemaProperty `json:"-"`                // Resolved from Scope against the data schema
 }
 
 // LabelDescription provides detailed label configuration

@@ -625,6 +625,219 @@ func TestParseNestedCategorization(t *testing.T) {
 	}
 }
 
+func TestControlSchemaPropertyResolved(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/name"
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"required": ["name"],
+		"properties": {
+			"name": {
+				"type": "string",
+				"minLength": 2,
+				"maxLength": 50
+			}
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	control, ok := result.UISchema.(*Control)
+	require.True(t, ok)
+	require.NotNil(t, control.SchemaProperty, "Expected SchemaProperty to be resolved")
+
+	assert.Equal(t, "string", control.SchemaProperty.Type)
+	assert.Equal(t, 2, *control.SchemaProperty.MinLength)
+	assert.Equal(t, 50, *control.SchemaProperty.MaxLength)
+	assert.True(t, control.SchemaProperty.Required)
+}
+
+func TestControlSchemaPropertyEnum(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/title"
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"properties": {
+			"title": {
+				"type": "string",
+				"enum": ["Mr", "Mrs", "Miss", "Ms"]
+			}
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	control := result.UISchema.(*Control)
+	require.NotNil(t, control.SchemaProperty)
+
+	assert.Equal(t, "string", control.SchemaProperty.Type)
+	assert.Equal(t, []any{"Mr", "Mrs", "Miss", "Ms"}, control.SchemaProperty.Enum)
+	assert.False(t, control.SchemaProperty.Required)
+}
+
+func TestControlSchemaPropertyBoolean(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/acceptTerms"
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"properties": {
+			"acceptTerms": {
+				"type": "boolean",
+				"default": false,
+				"const": true
+			}
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	control := result.UISchema.(*Control)
+	require.NotNil(t, control.SchemaProperty)
+
+	assert.Equal(t, "boolean", control.SchemaProperty.Type)
+	assert.Equal(t, false, control.SchemaProperty.Default)
+	assert.Equal(t, true, control.SchemaProperty.Const)
+}
+
+func TestControlSchemaPropertyNestedScope(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/personalDetails/properties/address/properties/postcode"
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"properties": {
+			"personalDetails": {
+				"type": "object",
+				"properties": {
+					"address": {
+						"type": "object",
+						"required": ["postcode"],
+						"properties": {
+							"postcode": {
+								"type": "string",
+								"pattern": "^[A-Z]{1,2}[0-9][0-9A-Z]?\\s?[0-9][A-Z]{2}$"
+							}
+						}
+					}
+				}
+			}
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	control := result.UISchema.(*Control)
+	require.NotNil(t, control.SchemaProperty)
+
+	assert.Equal(t, "string", control.SchemaProperty.Type)
+	assert.Equal(t, `^[A-Z]{1,2}[0-9][0-9A-Z]?\s?[0-9][A-Z]{2}$`, control.SchemaProperty.Pattern)
+	assert.True(t, control.SchemaProperty.Required)
+}
+
+func TestControlSchemaPropertyNilSchema(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/name"
+	}`)
+
+	result, err := Parse(uiSchema, nil)
+	require.NoError(t, err)
+
+	control := result.UISchema.(*Control)
+	assert.Nil(t, control.SchemaProperty)
+}
+
+func TestControlSchemaPropertyUnresolvableScope(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/nonexistent/properties/field"
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"properties": {
+			"name": { "type": "string" }
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	control := result.UISchema.(*Control)
+	assert.Nil(t, control.SchemaProperty)
+}
+
+func TestControlSchemaPropertyWithFormat(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "Control",
+		"scope": "#/properties/email"
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"properties": {
+			"email": {
+				"type": "string",
+				"format": "email"
+			}
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	control := result.UISchema.(*Control)
+	require.NotNil(t, control.SchemaProperty)
+
+	assert.Equal(t, "string", control.SchemaProperty.Type)
+	assert.Equal(t, "email", control.SchemaProperty.Format)
+}
+
+func TestLayoutWithMultipleControlsSchemaResolved(t *testing.T) {
+	uiSchema := []byte(`{
+		"type": "VerticalLayout",
+		"elements": [
+			{ "type": "Control", "scope": "#/properties/name" },
+			{ "type": "Control", "scope": "#/properties/age" }
+		]
+	}`)
+	schema := []byte(`{
+		"type": "object",
+		"required": ["name"],
+		"properties": {
+			"name": { "type": "string" },
+			"age": { "type": "integer", "minimum": 0, "maximum": 150 }
+		}
+	}`)
+
+	result, err := Parse(uiSchema, schema)
+	require.NoError(t, err)
+
+	layout := result.UISchema.(*VerticalLayout)
+	require.Len(t, layout.Elements, 2)
+
+	nameCtrl := layout.Elements[0].(*Control)
+	require.NotNil(t, nameCtrl.SchemaProperty)
+	assert.Equal(t, "string", nameCtrl.SchemaProperty.Type)
+	assert.True(t, nameCtrl.SchemaProperty.Required)
+
+	ageCtrl := layout.Elements[1].(*Control)
+	require.NotNil(t, ageCtrl.SchemaProperty)
+	assert.Equal(t, "integer", ageCtrl.SchemaProperty.Type)
+	assert.InDelta(t, float64(0), *ageCtrl.SchemaProperty.Minimum, 0)
+	assert.InDelta(t, float64(150), *ageCtrl.SchemaProperty.Maximum, 0)
+	assert.False(t, ageCtrl.SchemaProperty.Required)
+}
+
 // countingVisitor counts all element types encountered during a walk
 type countingVisitor struct {
 	BaseVisitor
